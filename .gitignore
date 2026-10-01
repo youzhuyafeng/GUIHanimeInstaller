@@ -1,0 +1,31 @@
+# 需求文档（含抓包得到的会话 cookie，不提交）
+要求.md
+实现要求.md
+
+# Cookie 文件（会话数据，绝不提交）
+hanime_cookies.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# 下载的视频文件
+*.mp4
+*.mkv
+*.webm
+*.flv
+*.ts
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
