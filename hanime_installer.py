@@ -12,7 +12,6 @@ import os
 import queue
 import re
 import sys
-import tempfile
 import threading
 import tkinter as tk
 from html.parser import HTMLParser
@@ -42,10 +41,9 @@ PAGE_HEADERS = {
     "user-agent": DEFAULT_USER_AGENT,
 }
 
-# 视频 CDN 的请求头，与抓包得到的 curl 保持一致。
-# 注意：cookie 是会话数据，过期后需要更新；referer 会在运行时按目标站点补全。
-# cookie 不放在 http_headers 里 —— yt-dlp 已废弃该用法且会告警，
-# 改为写成 Netscape 格式的 cookiefile 交给 yt-dlp 自己管理（见 COOKIE_STRING）。
+# 视频请求头，与抓包得到的 curl 保持一致。
+# 视频地址是带 token/expires 签名的 CDN 直链，本身即可自证身份，无需携带 cookie。
+# referer 会在运行时按目标站点自动补全，因此换镜像站通常不用改代码。
 VIDEO_HEADERS = {
     "accept": "*/*",
     "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
@@ -59,14 +57,6 @@ VIDEO_HEADERS = {
     "sec-fetch-site": "same-origin",
     "user-agent": DEFAULT_USER_AGENT,
 }
-
-# Cookie 存放文件（放在程序同目录）。内容就是从浏览器 DevTools 里复制的
-# 那一整行 Cookie 字符串，例如：a=1; b=2; c=3
-# 该文件已加入 .gitignore，不会随源码提交，请勿把真实 cookie 写进本文件。
-COOKIE_FILENAME = "hanime_cookies.txt"
-
-# 内置的 cookie 兜底值。默认留空，请优先使用上面的 cookie 文件。
-COOKIE_STRING = ""
 
 # Windows 文件名非法字符
 _ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|\r\n\t]')
@@ -201,57 +191,6 @@ def build_video_headers(video_url, page_url):
     else:
         headers["referer"] = DEFAULT_SITE
     return headers
-
-
-def load_cookie_string():
-    """读取 cookie：优先程序目录下的 hanime_cookies.txt，其次内置常量。
-
-    文件里直接粘贴浏览器 DevTools 中复制出来的那行 Cookie 字符串即可。
-    把 cookie 放在外部文件而不是源码里，是为了避免会话数据被提交进仓库。
-    """
-    path = os.path.join(app_dir(), COOKIE_FILENAME)
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8-sig") as handle:
-                content = handle.read().strip()
-            # 容忍多行写法，拼成一行
-            content = " ".join(line.strip() for line in content.splitlines() if line.strip())
-            if content:
-                return content, path
-        except OSError:
-            pass
-    return COOKIE_STRING.strip(), None
-
-
-def write_cookie_file(cookie_string, url, directory):
-    """把 Cookie 字符串写成 Netscape 格式的 cookiefile，交给 yt-dlp 加载。
-
-    比直接塞 http_headers["cookie"] 更稳妥：yt-dlp 会按域名正确携带 cookie，
-    也不会触发 "Passing cookies as a header is deprecated" 告警。
-    """
-    parts = urlsplit(url)
-    if not parts.hostname or not cookie_string.strip():
-        return None
-
-    domain = "." + parts.hostname if parts.hostname.count(".") >= 1 else parts.hostname
-    flag = "TRUE" if domain.startswith(".") else "FALSE"
-    secure = "TRUE" if parts.scheme == "https" else "FALSE"
-    expires = "2147483647"  # 会话 cookie 统一给一个远期过期时间
-
-    lines = ["# Netscape HTTP Cookie File", ""]
-    for chunk in cookie_string.split(";"):
-        if "=" not in chunk:
-            continue
-        name, _, value = chunk.strip().partition("=")
-        name, value = name.strip(), value.strip()
-        if not name:
-            continue
-        lines.append("\t".join([domain, flag, "/", secure, expires, name, value]))
-
-    path = os.path.join(directory, "hanime_cookies.txt")
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(lines) + "\n")
-    return path
 
 
 def silence_stdio():
@@ -436,18 +375,6 @@ class InstallerApp:
             "fragment_retries": 5,
             "progress_hooks": [hook],
         }
-
-        # cookie 转成 Netscape 格式写到系统临时目录，交给 yt-dlp 自己管理，
-        # 既不污染下载目录，也避免 yt-dlp 的 "cookie as header" 废弃告警。
-        cookie_string, cookie_source = load_cookie_string()
-        if cookie_string:
-            cookie_file = write_cookie_file(cookie_string, video_url, tempfile.gettempdir())
-            if cookie_file:
-                ydl_opts["cookiefile"] = cookie_file
-                self.log(f"      已加载 cookie（来源：{cookie_source or '内置常量'}）")
-        else:
-            self.log(f"      未找到 {COOKIE_FILENAME}，本次不带 cookie 下载；"
-                     f"若报 403 请在程序目录放置该文件。")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=True)

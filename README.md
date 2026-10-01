@@ -13,26 +13,39 @@
 ## 环境要求
 
 - Windows
-- Python 3.10 或更高版本（3.9 已被 yt-dlp 标记为 deprecated，仍可运行但不推荐）
+- Python 3.10 或更高版本（3.9 已被 yt-dlp 标记为 deprecated，仍能跑但不推荐）
 - 依赖见 `requirements.txt`：`requests`、`yt-dlp`、`pyinstaller`
 
+## 从 git clone 开始
+
+仓库里**只有源码，没有 exe**（`dist/` 已被 `.gitignore` 排除）。
+克隆下来后按下面的步骤走一遍即可使用：
+
 ```bash
+git clone https://github.com/youzhuyafeng/GUIHanimeInstaller.git
+cd GUIHanimeInstaller
 pip install -r requirements.txt
 ```
 
-## 使用方法
+装完依赖后，两种用法任选其一：
 
-### 方式一：直接使用打包好的程序
-
-双击 `dist\HanimeInstaller.exe` 即可打开界面（无需安装 Python）。
-
-### 方式二：从源码运行
+**方式一：直接运行源码**（最快，改代码后立刻生效）
 
 ```bash
-python hanime_installer.py
+py -3 hanime_installer.py
 ```
 
-### 操作步骤
+> 用 `py -3` 而不是 `python`，是因为部分机器上默认的 `python` 是 3.9。
+
+**方式二：先打包成 exe，再双击运行**（给不想装 Python 的人用）
+
+```bash
+build.bat
+```
+
+打包完成后双击 `dist\HanimeInstaller.exe` 即可，无需再依赖 Python 环境。
+
+## 使用步骤
 
 1. 在 **视频页面 URL** 输入框里粘贴视频页面地址，例如
    `https://www.hanime2.org/video/xxxx/`
@@ -42,14 +55,15 @@ python hanime_installer.py
 
 ## 打包成可执行程序
 
-在项目目录下双击运行 `build.bat`，或在命令行执行：
+直接双击运行 `build.bat`，它会自动挑选可用的 Python 解释器、安装依赖并调用 PyInstaller。
+等价的手工命令是：
 
 ```bash
-python -m PyInstaller --noconfirm --onefile --windowed ^
+py -3 -m PyInstaller --noconfirm --onefile --windowed ^
     --name HanimeInstaller --collect-all yt_dlp hanime_installer.py
 ```
 
-产物位于 `dist\HanimeInstaller.exe`，是一个单文件免安装程序。
+产物位于 `dist\HanimeInstaller.exe`，是一个单文件免安装程序（约 25 MB）。
 
 > `--windowed` 表示不弹出黑色控制台窗口；`--collect-all yt_dlp` 确保 yt-dlp 的
 > 提取器与数据文件都被打包进去。
@@ -57,29 +71,24 @@ python -m PyInstaller --noconfirm --onefile --windowed ^
 ## 工作原理
 
 1. **请求页面** — 用 `requests` 带上浏览器请求头请求用户输入的页面 URL，拿到 HTML。
-   同时读取程序目录下的 `hanime_cookies.txt`（若存在）。
 2. **解析 HTML** —
    - 找出 `<head>` 中 `rel="preload"` 且 `as="video"` 的 `<link>` 标签，
      取其 `href` 属性作为真实视频地址（HTML 实体会被还原，如 `&amp;` → `&`）；
    - 找出 `<meta name="title">`，取其 `content` 属性，**以空格分割后取第一部分**作为文件名。
 3. **下载视频** — 把视频地址交给 `yt-dlp` 下载，请求头与浏览器抓包保持一致
-   （`referer` / `user-agent` 等，cookie 以 Netscape 格式的 cookiefile 交给 yt-dlp 管理）。
+   （`referer` / `user-agent` 等）。
 
 解析优先使用标准库 `html.parser`，并额外用正则做了一层兜底，防止畸形 HTML 导致解析中断。
 
 ## 注意事项
 
-- **Cookie 放在外部文件里。** 程序启动下载时会读取**程序同目录**下的
-  `hanime_cookies.txt`（exe 打包后就是 exe 所在目录）。把浏览器 DevTools →
-  Network → 任意请求 → Request Headers 里的 `cookie:` 那一整行值粘贴进去即可，
-  形如 `a=1; b=2; c=3`，一行写完、可换行。
-  该文件已加入 `.gitignore`，**不会被提交到仓库**，请勿把真实 cookie 写进源码。
-  如果这个文件不存在，程序会不带 cookie 下载并提示，此时部分视频可能返回 403。
-- **Cookie 会过期。** 会话数据失效后需要重新从浏览器复制一份，覆盖
-  `hanime_cookies.txt` 的内容。
+- **不需要 cookie。** 解析出来的视频地址是带 `token` / `expires` 签名的 CDN 直链，
+  本身即可自证身份，因此程序不发送任何 cookie，也不需要在仓库里存放会话数据。
 - **`referer` 按站点自动补全。** 程序会用页面 URL 的 `scheme://host/` 作为 `referer`，
   因此换用镜像站时通常无需改代码。
 - **`range` 请求头没有硬编码。** yt-dlp 会自己管理 `Range` 头（断点续传时需要改写它），
   手动写死反而会破坏续传逻辑。
+- **直链有时效。** `expires` 参数过期后该地址即失效，重新点一次「开始下载」
+  会重新解析出新的直链。
 - 若页面结构变化（`<link>` / `<meta>` 标签改法），解析部分可能需要同步调整。
 - 本工具仅用于下载你有权访问的内容，请遵守目标站点的服务条款与当地法律法规。

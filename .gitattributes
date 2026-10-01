@@ -1,0 +1,5 @@
+# 统一换行符，避免 clone 后 .bat 被转成 LF 而无法被 cmd.exe 正确解析。
+* text=auto
+*.bat text eol=crlf
+*.py  text eol=lf
+*.md  text eol=lf
