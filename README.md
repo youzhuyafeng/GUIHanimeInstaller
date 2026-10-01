@@ -2,7 +2,7 @@
 
 一个带图形界面的Hanime网站视频下载工具。把视频页面 URL 粘贴进去，点击按钮即可下载到指定目录。
 
-您也可以直接下载打包好的可执行程序：[下载入口](https://github.com/youzhuyafeng/GUIHanimeInstaller/releases/download/v1.0.0/HanimeInstaller.exe)
+除了从源码构建之外，您也可以直接下载打包好的可执行程序：[下载入口](https://github.com/youzhuyafeng/GUIHanimeInstaller/releases/download/v1.0.0/HanimeInstaller.exe)
 
 ## 功能
 
