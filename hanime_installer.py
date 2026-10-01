@@ -16,7 +16,7 @@ import threading
 import tkinter as tk
 from html.parser import HTMLParser
 from tkinter import filedialog, messagebox, ttk
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import requests
 
@@ -154,21 +154,64 @@ def _extract_attrs(tag_text):
     return attrs
 
 
-def title_to_filename(title, fallback="video"):
-    """meta title 以空格分割取第一部分，并清洗成合法文件名。"""
-    if title:
-        name = title.split()[0]
-    else:
-        name = fallback
-    name = _ILLEGAL_CHARS.sub("_", name).strip(" .")
-    # Windows 保留名
-    if name.upper().split(".")[0] in {
-        "CON", "PRN", "AUX", "NUL",
-        *(f"COM{i}" for i in range(1, 10)),
-        *(f"LPT{i}" for i in range(1, 10)),
-    }:
+# Windows 保留设备名，不能直接用作文件名
+_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+# 用户手填文件名时，末尾若是这些扩展名就先剥掉，免得存成 abc.mp4.mp4
+_MEDIA_EXTS = (".mp4", ".mkv", ".webm", ".flv", ".ts", ".m4v", ".mov", ".avi")
+
+
+def sanitize_filename(name, fallback="video"):
+    """清洗成 Windows 下的合法文件名。"""
+    name = _ILLEGAL_CHARS.sub("_", (name or "").strip()).strip(" .")
+    if name.upper().split(".")[0] in _RESERVED_NAMES:
         name = "_" + name
     return name or fallback
+
+
+def title_to_filename(title, fallback="video"):
+    """meta title 以空格分割取第一部分，并清洗成合法文件名。"""
+    if not title:
+        return fallback
+    return sanitize_filename(title.split()[0], fallback)
+
+
+def extract_url_param(url, key):
+    """取 URL 查询串中某个参数的值；取不到返回 None。"""
+    try:
+        values = parse_qs(urlsplit(url or "").query).get(key)
+    except ValueError:
+        return None
+    if not values:
+        return None
+    return values[0].strip() or None
+
+
+def build_default_filename(title, page_url, fallback="video"):
+    """默认文件名 = 标题第一段 + "_" + 输入 URL 中 v 参数的值。
+
+    URL 里没有 v 参数时就只用标题部分。
+    """
+    name = title_to_filename(title, fallback)
+    v_value = extract_url_param(page_url, "v")
+    if v_value:
+        safe_v = sanitize_filename(v_value, fallback="")
+        if safe_v:
+            return f"{name}_{safe_v}"
+    return name
+
+
+def normalize_user_filename(name, fallback="video"):
+    """处理用户手填的文件名：清洗非法字符，并剥掉多余的视频扩展名。"""
+    cleaned = sanitize_filename(name, fallback)
+    for ext in _MEDIA_EXTS:
+        if cleaned.lower().endswith(ext) and len(cleaned) > len(ext):
+            return sanitize_filename(cleaned[: -len(ext)], fallback)
+    return cleaned
 
 
 def app_dir():
@@ -214,11 +257,12 @@ class InstallerApp:
         self.worker = None
 
         root.title(f"{APP_NAME} v{APP_VERSION}")
-        root.geometry("640x440")
-        root.minsize(560, 380)
+        root.geometry("680x500")
+        root.minsize(600, 440)
 
         self.url_var = tk.StringVar()
         self.dir_var = tk.StringVar(value=app_dir())
+        self.name_var = tk.StringVar()
         self.status_var = tk.StringVar(value="就绪")
 
         self._build_ui()
@@ -239,24 +283,32 @@ class InstallerApp:
         ttk.Entry(frame, textvariable=self.dir_var).grid(row=1, column=1, sticky="ew", **pad)
         ttk.Button(frame, text="浏览…", command=self._choose_dir).grid(row=1, column=2, sticky="e", **pad)
 
+        ttk.Label(frame, text="文件名：").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Entry(frame, textvariable=self.name_var).grid(row=2, column=1, columnspan=2, sticky="ew", **pad)
+        ttk.Label(
+            frame,
+            text="留空则自动命名为：<标题第一段>_<URL 中 v 参数的值>（无 v 参数时只用标题）",
+            foreground="#666666",
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=10)
+
         self.download_btn = ttk.Button(frame, text="开始下载", command=self._start_download)
-        self.download_btn.grid(row=2, column=1, sticky="w", **pad)
+        self.download_btn.grid(row=4, column=1, sticky="w", **pad)
 
         self.progress = ttk.Progressbar(frame, mode="determinate", maximum=100)
-        self.progress.grid(row=3, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
 
-        ttk.Label(frame, textvariable=self.status_var).grid(row=4, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Label(frame, textvariable=self.status_var).grid(row=6, column=0, columnspan=3, sticky="w", **pad)
 
-        ttk.Label(frame, text="日志：").grid(row=5, column=0, sticky="nw", **pad)
+        ttk.Label(frame, text="日志：").grid(row=7, column=0, sticky="nw", **pad)
         self.log_text = tk.Text(frame, height=10, wrap="word", state="disabled")
-        self.log_text.grid(row=5, column=1, columnspan=2, sticky="nsew", **pad)
+        self.log_text.grid(row=7, column=1, columnspan=2, sticky="nsew", **pad)
 
         scroll = ttk.Scrollbar(frame, command=self.log_text.yview)
-        scroll.grid(row=5, column=3, sticky="ns", pady=6)
+        scroll.grid(row=7, column=3, sticky="ns", pady=6)
         self.log_text.configure(yscrollcommand=scroll.set)
 
         frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(5, weight=1)
+        frame.rowconfigure(7, weight=1)
 
     def _choose_dir(self):
         current = self.dir_var.get() or app_dir()
@@ -303,6 +355,9 @@ class InstallerApp:
             messagebox.showerror(APP_NAME, f"无法创建保存目录：\n{exc}")
             return
 
+        # 文件名留空 -> 用「标题第一段_v参数」自动命名（需要先解析页面）
+        custom_name = self.name_var.get().strip()
+
         if yt_dlp is None:
             messagebox.showerror(APP_NAME, "缺少 yt-dlp 依赖，请先执行：pip install yt-dlp")
             return
@@ -315,11 +370,11 @@ class InstallerApp:
         self.download_btn.configure(state="disabled")
 
         self.worker = threading.Thread(
-            target=self._download_worker, args=(page_url, out_dir), daemon=True
+            target=self._download_worker, args=(page_url, out_dir, custom_name), daemon=True
         )
         self.worker.start()
 
-    def _download_worker(self, page_url, out_dir):
+    def _download_worker(self, page_url, out_dir, custom_name=""):
         try:
             self.log(f"[1/3] 请求页面：{page_url}")
             response = requests.get(page_url, headers=PAGE_HEADERS, timeout=30)
@@ -334,10 +389,19 @@ class InstallerApp:
                 return
             video_url = urljoin(page_url, video_url)
 
-            filename = title_to_filename(title)
+            if custom_name:
+                filename = normalize_user_filename(custom_name)
+                self.log(f"      文件名   ：{filename}（用户指定）")
+            else:
+                v_value = extract_url_param(page_url, "v")
+                filename = build_default_filename(title, page_url)
+                source = f"标题「{title.split()[0]}」" if title else "默认名"
+                if v_value:
+                    source += f" + v={v_value}"
+                self.log(f"      文件名   ：{filename}（自动：{source}）")
+
             self.log(f"      视频地址：{video_url}")
-            self.log(f"      标题     ：{title or '(未找到，使用默认名)'}")
-            self.log(f"      文件名   ：{filename}")
+            self.log(f"      标题     ：{title or '(未找到)'}")
 
             self.log("[3/3] 调用 yt-dlp 开始下载…")
             self._run_ytdlp(video_url, filename, out_dir, page_url)
